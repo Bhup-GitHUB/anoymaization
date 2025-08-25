@@ -26,7 +26,7 @@ This guide will help you install and set up the Packet Anonymization Project on 
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/yourusername/packet-anonymization.git
+   git clone https://github.com/Bhup-GitHUB/anoymaization
    cd packet-anonymization
    ```
 
