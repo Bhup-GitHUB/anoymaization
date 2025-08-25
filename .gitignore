@@ -1,0 +1,85 @@
+# Build artifacts
+*.o
+*.so
+*.a
+*.ko
+*.mod.c
+*.mod
+*.order
+*.symvers
+*.d
+*.dwo
+*.ko.cmd
+*.mod.o.cmd
+
+# Executables
+prog_userspace
+*.exe
+*.out
+*.app
+
+# BPF object files
+*.bpf.o
+*.bpf
+
+# Kernel modules
+*.ko
+
+# Temporary files
+*~
+*.swp
+*.swo
+*#
+.#*
+\#*#
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.code-workspace
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Log files
+*.log
+logs/
+
+# Configuration backups
+*.bak
+*.backup
+*.orig
+
+# Dependencies
+node_modules/
+vendor/
+
+# Documentation build
+docs/_build/
+docs/build/
+
+# Test artifacts
+test_results/
+coverage/
+
+# Package files
+*.tar.gz
+*.zip
+*.deb
+*.rpm
+
+# Kernel headers (if copied locally)
+linux-headers/
+
+# libbpf (if not using submodule)
+libbpf/
+
+# XDP tools (if not using submodule)
+xdp-tools/
