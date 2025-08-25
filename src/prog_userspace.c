@@ -11,34 +11,31 @@
 #include <linux/if_link.h>
 #include "common_structs.h"
 
-// Global variables for cleanup
-static int config_map_fd = -1;
-static int stats_map_fd = -1;
-static int prog_fd = -1;
-static int xdp_link_fd = -1;
-static char *interface_name = NULL;
-static volatile bool running = true;
+typedef struct {
+    int config_map_fd;
+    int stats_map_fd;
+    int prog_fd;
+    int xdp_link_fd;
+    char *interface_name;
+    volatile bool running;
+} application_state;
 
-// Signal handler for graceful shutdown
-static void signal_handler(int sig) {
-    printf("\nReceived signal %d, shutting down...\n", sig);
-    running = false;
+static application_state app_state = {
+    .config_map_fd = -1,
+    .stats_map_fd = -1,
+    .prog_fd = -1,
+    .xdp_link_fd = -1,
+    .interface_name = NULL,
+    .running = true
+};
+
+static void handle_signal(int sig) {
+    printf("\nSignal %d received, terminating...\n", sig);
+    app_state.running = false;
 }
 
-// Parse configuration file
-static config_parse_result parse_config_file(const char *filename) {
-    config_parse_result result = {0};
-    result.success = false;
-    
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        snprintf(result.error_message, sizeof(result.error_message), 
-                "Failed to open config file: %s", strerror(errno));
-        return result;
-    }
-    
-    // Initialize with defaults
-    result.config = (anonymization_config){
+static anonymization_config create_default_config(void) {
+    return (anonymization_config){
         .anonymize_multicast_broadcast = false,
         .anonymize_srcmac_oui = true,
         .anonymize_srcmac_id = false,
@@ -47,18 +44,62 @@ static config_parse_result parse_config_file(const char *filename) {
         .preserve_prefix = true,
         .anonymize_mac_in_arphdr = true,
         .anonymize_ipv4_in_arphdr = true,
-        .src_ip_mask_lengths = 0xFFFFFF00,  // /24
-        .dest_ip_mask_lengths = 0xFFFFFF00, // /24
+        .src_ip_mask_lengths = 0xFFFFFF00,
+        .dest_ip_mask_lengths = 0xFFFFFF00,
         .random_salt = DEFAULT_SALT
     };
+}
+
+static void trim_whitespace(char *str) {
+    while (*str == ' ') str++;
+    char *end = str + strlen(str) - 1;
+    while (end > str && (*end == ' ' || *end == '\n' || *end == '\r')) {
+        *end = '\0';
+        end--;
+    }
+}
+
+static bool parse_boolean_value(const char *value) {
+    return strcmp(value, "yes") == 0 || strcmp(value, "true") == 0 || strcmp(value, "1") == 0;
+}
+
+static void apply_config_option(anonymization_config *config, const char *key, const char *value) {
+    if (strcmp(key, "anonymize_srcmac_oui") == 0) {
+        config->anonymize_srcmac_oui = parse_boolean_value(value);
+    } else if (strcmp(key, "anonymize_srcmac_id") == 0) {
+        config->anonymize_srcmac_id = parse_boolean_value(value);
+    } else if (strcmp(key, "anonymize_dstmac_oui") == 0) {
+        config->anonymize_dstmac_oui = parse_boolean_value(value);
+    } else if (strcmp(key, "anonymize_dstmac_id") == 0) {
+        config->anonymize_dstmac_id = parse_boolean_value(value);
+    } else if (strcmp(key, "preserve_prefix") == 0) {
+        config->preserve_prefix = parse_boolean_value(value);
+    } else if (strcmp(key, "anonymize_multicast_broadcast") == 0) {
+        config->anonymize_multicast_broadcast = parse_boolean_value(value);
+    } else if (strcmp(key, "anonymize_mac_in_arphdr") == 0) {
+        config->anonymize_mac_in_arphdr = parse_boolean_value(value);
+    } else if (strcmp(key, "anonymize_ipv4_in_arphdr") == 0) {
+        config->anonymize_ipv4_in_arphdr = parse_boolean_value(value);
+    } else if (strcmp(key, "random_salt") == 0) {
+        config->random_salt = (__u32)strtoul(value, NULL, 0);
+    }
+}
+
+static config_parse_result parse_config_file(const char *filename) {
+    config_parse_result result = {0};
+    result.success = false;
+    
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        snprintf(result.error_message, sizeof(result.error_message), 
+                "Config file open failed: %s", strerror(errno));
+        return result;
+    }
+    
+    result.config = create_default_config();
     
     char line[MAX_CONFIG_LINE_LENGTH];
-    int line_num = 0;
-    
     while (fgets(line, sizeof(line), file)) {
-        line_num++;
-        
-        // Skip comments and empty lines
         if (line[0] == '#' || line[0] == '\n') {
             continue;
         }
@@ -70,34 +111,10 @@ static config_parse_result parse_config_file(const char *filename) {
             continue;
         }
         
-        // Remove whitespace
-        while (*key == ' ') key++;
-        while (*value == ' ') value++;
+        trim_whitespace(key);
+        trim_whitespace(value);
         
-        // Remove newline from value
-        char *newline = strchr(value, '\n');
-        if (newline) *newline = '\0';
-        
-        // Parse configuration options
-        if (strcmp(key, "anonymize_srcmac_oui") == 0) {
-            result.config.anonymize_srcmac_oui = (strcmp(value, "yes") == 0);
-        } else if (strcmp(key, "anonymize_srcmac_id") == 0) {
-            result.config.anonymize_srcmac_id = (strcmp(value, "yes") == 0);
-        } else if (strcmp(key, "anonymize_dstmac_oui") == 0) {
-            result.config.anonymize_dstmac_oui = (strcmp(value, "yes") == 0);
-        } else if (strcmp(key, "anonymize_dstmac_id") == 0) {
-            result.config.anonymize_dstmac_id = (strcmp(value, "yes") == 0);
-        } else if (strcmp(key, "preserve_prefix") == 0) {
-            result.config.preserve_prefix = (strcmp(value, "yes") == 0);
-        } else if (strcmp(key, "anonymize_multicast_broadcast") == 0) {
-            result.config.anonymize_multicast_broadcast = (strcmp(value, "yes") == 0);
-        } else if (strcmp(key, "anonymize_mac_in_arphdr") == 0) {
-            result.config.anonymize_mac_in_arphdr = (strcmp(value, "yes") == 0);
-        } else if (strcmp(key, "anonymize_ipv4_in_arphdr") == 0) {
-            result.config.anonymize_ipv4_in_arphdr = (strcmp(value, "yes") == 0);
-        } else if (strcmp(key, "random_salt") == 0) {
-            result.config.random_salt = (__u32)strtoul(value, NULL, 0);
-        }
+        apply_config_option(&result.config, key, value);
     }
     
     fclose(file);
@@ -105,120 +122,113 @@ static config_parse_result parse_config_file(const char *filename) {
     return result;
 }
 
-// Load and attach XDP program
-static int load_and_attach_xdp(const char *interface) {
-    struct bpf_object *obj;
-    int err;
-    
-    // Load BPF object file
-    obj = bpf_object__open_file("prog_kern.o", NULL);
+static int load_bpf_program(void) {
+    struct bpf_object *obj = bpf_object__open_file("prog_kern.o", NULL);
     if (libbpf_get_error(obj)) {
-        fprintf(stderr, "Failed to open BPF object file\n");
+        fprintf(stderr, "BPF object file open failed\n");
         return -1;
     }
     
-    // Load BPF program
-    err = bpf_object__load(obj);
+    int err = bpf_object__load(obj);
     if (err) {
-        fprintf(stderr, "Failed to load BPF object: %s\n", strerror(-err));
+        fprintf(stderr, "BPF object load failed: %s\n", strerror(-err));
         bpf_object__close(obj);
         return err;
     }
     
-    // Get program file descriptor
     struct bpf_program *prog = bpf_object__find_program_by_name(obj, "xdp_anonymize_prog");
     if (!prog) {
-        fprintf(stderr, "Failed to find XDP program\n");
+        fprintf(stderr, "XDP program not found\n");
         bpf_object__close(obj);
         return -1;
     }
     
-    prog_fd = bpf_program__fd(prog);
+    app_state.prog_fd = bpf_program__fd(prog);
+    app_state.config_map_fd = bpf_object__find_map_fd_by_name(obj, "config_map");
+    app_state.stats_map_fd = bpf_object__find_map_fd_by_name(obj, "stats_map");
     
-    // Get map file descriptors
-    config_map_fd = bpf_object__find_map_fd_by_name(obj, "config_map");
-    stats_map_fd = bpf_object__find_map_fd_by_name(obj, "stats_map");
-    
-    if (config_map_fd < 0 || stats_map_fd < 0) {
-        fprintf(stderr, "Failed to get map file descriptors\n");
+    if (app_state.config_map_fd < 0 || app_state.stats_map_fd < 0) {
+        fprintf(stderr, "BPF maps not found\n");
         bpf_object__close(obj);
         return -1;
     }
-    
-    // Attach XDP program to interface
-    int ifindex = if_nametoindex(interface);
-    if (ifindex == 0) {
-        fprintf(stderr, "Interface %s not found\n", interface);
-        bpf_object__close(obj);
-        return -1;
-    }
-    
-    err = bpf_xdp_attach(ifindex, prog_fd, XDP_FLAGS_DRV_MODE, NULL);
-    if (err) {
-        fprintf(stderr, "Failed to attach XDP program: %s\n", strerror(-err));
-        bpf_object__close(obj);
-        return err;
-    }
-    
-    xdp_link_fd = err;
-    printf("XDP program attached to interface %s\n", interface);
     
     bpf_object__close(obj);
     return 0;
 }
 
-// Update configuration in BPF map
-static int update_config(const anonymization_config *config) {
-    __u32 key = 0;
-    int err = bpf_map_update_elem(config_map_fd, &key, config, BPF_ANY);
+static int attach_xdp_program(const char *interface) {
+    int ifindex = if_nametoindex(interface);
+    if (ifindex == 0) {
+        fprintf(stderr, "Interface %s not found\n", interface);
+        return -1;
+    }
+    
+    int err = bpf_xdp_attach(ifindex, app_state.prog_fd, XDP_FLAGS_DRV_MODE, NULL);
     if (err) {
-        fprintf(stderr, "Failed to update config map: %s\n", strerror(-err));
+        fprintf(stderr, "XDP program attach failed: %s\n", strerror(-err));
         return err;
     }
-    printf("Configuration updated successfully\n");
+    
+    app_state.xdp_link_fd = err;
+    printf("XDP program attached to %s\n", interface);
     return 0;
 }
 
-// Print statistics
-static void print_stats() {
+static int update_bpf_config(const anonymization_config *config) {
+    __u32 key = 0;
+    int err = bpf_map_update_elem(app_state.config_map_fd, &key, config, BPF_ANY);
+    if (err) {
+        fprintf(stderr, "Config map update failed: %s\n", strerror(-err));
+        return err;
+    }
+    printf("Configuration updated\n");
+    return 0;
+}
+
+static void display_statistics(void) {
     __u32 key = 0;
     anonymization_stats stats;
     
-    int err = bpf_map_lookup_elem(stats_map_fd, &key, &stats);
+    int err = bpf_map_lookup_elem(app_state.stats_map_fd, &key, &stats);
     if (err) {
-        fprintf(stderr, "Failed to get statistics: %s\n", strerror(-err));
+        fprintf(stderr, "Statistics retrieval failed: %s\n", strerror(-err));
         return;
     }
     
-    printf("\n=== Packet Anonymization Statistics ===\n");
+    printf("\n=== Anonymization Statistics ===\n");
     printf("Packets processed:     %llu\n", stats.packets_processed);
     printf("Packets anonymized:    %llu\n", stats.packets_anonymized);
     printf("MAC addresses anonymized: %llu\n", stats.mac_addresses_anonymized);
     printf("IP addresses anonymized:  %llu\n", stats.ip_addresses_anonymized);
     printf("ARP packets anonymized:   %llu\n", stats.arp_packets_anonymized);
     printf("Errors:               %llu\n", stats.errors);
-    printf("=====================================\n");
+    printf("================================\n");
 }
 
-// Cleanup function
-static void cleanup() {
-    if (xdp_link_fd >= 0) {
-        bpf_xdp_detach(interface_name, XDP_FLAGS_DRV_MODE, NULL);
-        printf("XDP program detached from interface %s\n", interface_name);
+static void cleanup_resources(void) {
+    if (app_state.xdp_link_fd >= 0) {
+        bpf_xdp_detach(app_state.interface_name, XDP_FLAGS_DRV_MODE, NULL);
+        printf("XDP program detached from %s\n", app_state.interface_name);
     }
     
-    if (config_map_fd >= 0) {
-        close(config_map_fd);
-    }
-    if (stats_map_fd >= 0) {
-        close(stats_map_fd);
-    }
-    if (prog_fd >= 0) {
-        close(prog_fd);
-    }
+    if (app_state.config_map_fd >= 0) close(app_state.config_map_fd);
+    if (app_state.stats_map_fd >= 0) close(app_state.stats_map_fd);
+    if (app_state.prog_fd >= 0) close(app_state.prog_fd);
 }
 
-// Main function
+static int setup_resource_limits(void) {
+    struct rlimit rlim = {
+        .rlim_cur = RLIM_INFINITY,
+        .rlim_max = RLIM_INFINITY,
+    };
+    if (setrlimit(RLIMIT_MEMLOCK, &rlim)) {
+        fprintf(stderr, "Resource limit setup failed: %s\n", strerror(errno));
+        return 1;
+    }
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     if (argc != 3) {
         fprintf(stderr, "Usage: %s <interface> <config_file>\n", argv[0]);
@@ -226,56 +236,48 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    interface_name = argv[1];
+    app_state.interface_name = argv[1];
     const char *config_file = argv[2];
     
-    // Set up signal handlers
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
+    signal(SIGINT, handle_signal);
+    signal(SIGTERM, handle_signal);
     
-    // Set resource limits for BPF
-    struct rlimit rlim = {
-        .rlim_cur = RLIM_INFINITY,
-        .rlim_max = RLIM_INFINITY,
-    };
-    if (setrlimit(RLIMIT_MEMLOCK, &rlim)) {
-        fprintf(stderr, "Failed to set resource limit: %s\n", strerror(errno));
+    if (setup_resource_limits()) {
         return 1;
     }
     
-    // Parse configuration
     config_parse_result config_result = parse_config_file(config_file);
     if (!config_result.success) {
         fprintf(stderr, "Configuration error: %s\n", config_result.error_message);
         return 1;
     }
     
-    printf("Configuration loaded successfully\n");
+    printf("Configuration loaded\n");
     
-    // Load and attach XDP program
-    int err = load_and_attach_xdp(interface_name);
-    if (err) {
-        fprintf(stderr, "Failed to load and attach XDP program\n");
+    if (load_bpf_program()) {
+        fprintf(stderr, "BPF program loading failed\n");
         return 1;
     }
     
-    // Update configuration in BPF map
-    err = update_config(&config_result.config);
-    if (err) {
-        cleanup();
+    if (attach_xdp_program(app_state.interface_name)) {
+        cleanup_resources();
         return 1;
     }
     
-    printf("Packet anonymization started on interface %s\n", interface_name);
+    if (update_bpf_config(&config_result.config)) {
+        cleanup_resources();
+        return 1;
+    }
+    
+    printf("Anonymization started on %s\n", app_state.interface_name);
     printf("Press Ctrl+C to stop\n");
     
-    // Main loop - print statistics periodically
-    while (running) {
+    while (app_state.running) {
         sleep(5);
-        print_stats();
+        display_statistics();
     }
     
-    cleanup();
-    printf("Packet anonymization stopped\n");
+    cleanup_resources();
+    printf("Anonymization stopped\n");
     return 0;
 }

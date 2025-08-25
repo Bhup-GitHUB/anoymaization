@@ -35,8 +35,8 @@ A high-performance **eBPF/XDP-based packet anonymization tool** for network traf
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/packet-anonymization.git
-cd packet-anonymization
+git clone https://github.com/Bhup-GitHUB/anoymaization.git
+cd anoymaization
 
 # Install dependencies
 ./scripts/install_dependencies.sh
@@ -93,7 +93,7 @@ random_salt: 0x12345678      # Hash salt for consistency
 ## 📁 Project Structure
 
 ```
-packet-anonymization/
+anoymaization/
 ├── src/                    # Source code
 │   ├── prog_kern.c        # eBPF kernel program
 │   ├── prog_userspace.c   # Userspace control program
@@ -121,9 +121,7 @@ make check-deps
 make clean
 ```
 
-## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🤝 Contributing
 
