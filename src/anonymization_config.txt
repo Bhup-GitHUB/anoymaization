@@ -1,0 +1,50 @@
+# Packet Anonymization Configuration File
+# Format: key: value
+# Values: yes/no for boolean, hex/decimal for numbers
+
+# MAC Address Anonymization
+anonymize_srcmac_oui: yes    # Anonymize first 3 bytes of source MAC (OUI)
+anonymize_srcmac_id: no      # Anonymize last 3 bytes of source MAC (NIC ID)
+anonymize_dstmac_oui: no     # Anonymize first 3 bytes of destination MAC
+anonymize_dstmac_id: yes     # Anonymize last 3 bytes of destination MAC
+
+# IP Address Anonymization
+# Note: IP ranges are specified in the kernel program
+anonymize_srcipv4: yes       # Anonymize source IPv4 addresses
+anonymize_dstipv4: yes       # Anonymize destination IPv4 addresses
+
+# Network Structure Preservation
+preserve_prefix: yes         # Keep network structure while anonymizing
+# Prefix masks: 0xFFFFFF00 = /24, 0xFFFF0000 = /16, 0xFF000000 = /8
+
+# Special Packet Handling
+anonymize_multicast_broadcast: no  # Handle multicast/broadcast packets
+anonymize_mac_in_arphdr: yes       # Anonymize MAC addresses in ARP headers
+anonymize_ipv4_in_arphdr: yes      # Anonymize IPv4 addresses in ARP headers
+
+# Security Settings
+random_salt: 0x12345678      # Random salt for hash function (hex)
+# Change this value for different anonymization results
+
+# Example configurations for different use cases:
+
+# High Privacy (anonymize everything):
+# anonymize_srcmac_oui: yes
+# anonymize_srcmac_id: yes
+# anonymize_dstmac_oui: yes
+# anonymize_dstmac_id: yes
+# preserve_prefix: no
+
+# Network Analysis (preserve structure):
+# anonymize_srcmac_oui: yes
+# anonymize_srcmac_id: no
+# anonymize_dstmac_oui: no
+# anonymize_dstmac_id: yes
+# preserve_prefix: yes
+
+# Compliance Mode (minimal anonymization):
+# anonymize_srcmac_oui: no
+# anonymize_srcmac_id: no
+# anonymize_dstmac_oui: no
+# anonymize_dstmac_id: no
+# preserve_prefix: yes
